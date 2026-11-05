@@ -1,0 +1,106 @@
+name: Publish desktop installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release containing branch-desktop-build.zip
+        required: true
+        default: v0.1.1
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: windows-latest
+            platform: win
+            arch: arm64
+          - os: windows-latest
+            platform: win
+            arch: ia32
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the reviewed desktop build input
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.draft')" = true
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern branch-desktop-build.zip --dir .
+          python -c "import hashlib,json,os,zipfile; from pathlib import Path; m=json.loads(Path('release-input.json').read_text()); assert m['tag']==os.environ['RELEASE_TAG']; assert hashlib.sha256(Path('branch-desktop-build.zip').read_bytes()).hexdigest()==m['sha256']; zipfile.ZipFile('branch-desktop-build.zip').extractall('.')"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm --prefix desktop ci
+      - run: npm --prefix desktop test
+      - name: Build the native installer
+        run: npm --prefix desktop run release -- ${{ matrix.platform }} ${{ matrix.arch }} --installer-only
+        env:
+          DESKTOP_APP_URL: https://workspace.branch.peyyfi.io
+          DESKTOP_MAC_IDENTITY: '-'
+      - name: Verify architecture, branding and live URL
+        run: node desktop/scripts/verify-release.cjs ${{ matrix.platform }} ${{ matrix.arch }}
+      - if: matrix.arch == 'ia32'
+        run: npm --prefix desktop install --no-save --package-lock=false playwright-core@1.64.1
+      - if: matrix.arch == 'ia32'
+        name: Run the actual 32-bit application
+        run: node desktop/scripts/test-packaged.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: installers
+          merge-multiple: true
+      - name: Publish verified public downloads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for target in mac-arm64.dmg mac-x64.dmg win-x64.exe win-arm64.exe win-ia32.exe; do
+            test -f "installers/Branch-$version-$target"
+          done
+          (cd installers && sha256sum *.dmg *.exe > SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" installers/*.dmg installers/*.exe installers/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release delete-asset "$RELEASE_TAG" branch-desktop-build.zip --repo "$GITHUB_REPOSITORY" --yes
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
