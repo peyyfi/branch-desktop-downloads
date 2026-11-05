@@ -48,8 +48,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.draft')" = true
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern branch-desktop-build.zip --dir .
+          release_id="$(python -c "import json;print(json.load(open('release-input.json'))['releaseId'])")"
+          asset_id="$(python -c "import json;print(json.load(open('release-input.json'))['inputAssetId'])")"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')" = true
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" --header 'Accept: application/octet-stream' > branch-desktop-build.zip
           python -c "import hashlib,json,os,zipfile; from pathlib import Path; m=json.loads(Path('release-input.json').read_text()); assert m['tag']==os.environ['RELEASE_TAG']; assert hashlib.sha256(Path('branch-desktop-build.zip').read_bytes()).hexdigest()==m['sha256']; zipfile.ZipFile('branch-desktop-build.zip').extractall('.')"
       - uses: actions/setup-node@v4
         with:
@@ -85,6 +87,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: installer-*
@@ -101,6 +104,29 @@ jobs:
             test -f "installers/Branch-$version-$target"
           done
           (cd installers && sha256sum *.dmg *.exe > SHA256SUMS.txt)
-          gh release upload "$RELEASE_TAG" installers/*.dmg installers/*.exe installers/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
-          gh release delete-asset "$RELEASE_TAG" branch-desktop-build.zip --repo "$GITHUB_REPOSITORY" --yes
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          python - <<'PYCODE'
+          from pathlib import Path
+          import json, os, urllib.request
+          metadata = json.loads(Path('release-input.json').read_text())
+          base = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY']
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'User-Agent': 'Branch-Release-Publisher'}
+          def api(url, method='GET', data=None, content_type='application/json'):
+              request = urllib.request.Request(url, method=method, data=data, headers={**headers, 'Content-Type': content_type})
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  body = response.read()
+                  return json.loads(body) if body else None
+          release = api(base + '/releases/' + str(metadata['releaseId']))
+          assert release['draft'] is True and release['tag_name'] == os.environ['RELEASE_TAG']
+          upload = release['upload_url'].split('{')[0]
+          for file in sorted(Path('installers').iterdir()):
+              if file.suffix not in ['.dmg', '.exe'] and file.name != 'SHA256SUMS.txt':
+                  continue
+              existing = next((a for a in release['assets'] if a['name'] == file.name), None)
+              if existing:
+                  api(base + '/releases/assets/' + str(existing['id']), method='DELETE')
+              print('Uploading ' + file.name, flush=True)
+              api(upload + '?name=' + file.name, method='POST', data=file.read_bytes(), content_type='application/octet-stream')
+          api(base + '/releases/assets/' + str(metadata['inputAssetId']), method='DELETE')
+          api(base + '/releases/' + str(metadata['releaseId']), method='PATCH', data=json.dumps({'draft': False, 'make_latest': 'true'}).encode())
+          print('Published all five verified installers without requiring customer sign-in.')
+          PYCODE
