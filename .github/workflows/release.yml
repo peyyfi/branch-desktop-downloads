@@ -14,6 +14,7 @@ permissions:
 
 env:
   RELEASE_TAG: ${{ inputs.tag }}
+  PYTHONUTF8: '1'
 
 jobs:
   build:
@@ -49,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > release-candidates.json
-          release_id="$(python -c "import json; m=json.load(open('release-input.json')); rs=[r for r in json.load(open('release-candidates.json')) if r['draft'] and r['name']==m['releaseName']]; assert len(rs)==1, 'Expected one matching draft release'; print(rs[0]['id'])")"
+          release_id="$(python -c "import json; m=json.load(open('release-input.json', encoding='utf-8')); rs=[r for r in json.load(open('release-candidates.json', encoding='utf-8')) if r['draft'] and r['name']==m['releaseName']]; assert len(rs)==1, 'Expected one matching draft release'; print(rs[0]['id'])")"
           asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets[] | select(.name == "branch-desktop-build.zip") | .id')"
           test -n "$asset_id"
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')" = true
