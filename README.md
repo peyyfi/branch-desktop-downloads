@@ -9,3 +9,5 @@ Windows builds include x64, ARM64 and 32-bit (ia32). The 32-bit compatibility ru
 Windows installers are unsigned and Mac apps are not Apple-notarized. Check your organization’s installation policy before installing. Checksums are included with each release.
 
 This repository hosts the download workflow and published installers. Build input is supplied as a private draft-release asset, verified against its recorded checksum, then removed before publication.
+
+Version 0.1.2 adds microphone access for private voice calls and group voice rooms in Team Chat. Install the update over 0.1.1, then allow microphone access when starting or accepting a call. The existing live workspace and LiveKit project are unchanged.

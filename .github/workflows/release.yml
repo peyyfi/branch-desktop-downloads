@@ -6,7 +6,7 @@ on:
       tag:
         description: Draft release containing branch-desktop-build.zip
         required: true
-        default: v0.1.1
+        default: v0.1.2
         type: string
 
 permissions:
@@ -48,8 +48,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          release_id="$(python -c "import json;print(json.load(open('release-input.json'))['releaseId'])")"
-          asset_id="$(python -c "import json;print(json.load(open('release-input.json'))['inputAssetId'])")"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > release-candidates.json
+          release_id="$(python -c "import json; m=json.load(open('release-input.json')); rs=[r for r in json.load(open('release-candidates.json')) if r['draft'] and r['name']==m['releaseName']]; assert len(rs)==1, 'Expected one matching draft release'; print(rs[0]['id'])")"
+          asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets[] | select(.name == "branch-desktop-build.zip") | .id')"
+          test -n "$asset_id"
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')" = true
           gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" --header 'Accept: application/octet-stream' > branch-desktop-build.zip
           python -c "import hashlib,json,os,zipfile; from pathlib import Path; m=json.loads(Path('release-input.json').read_text()); assert m['tag']==os.environ['RELEASE_TAG']; assert hashlib.sha256(Path('branch-desktop-build.zip').read_bytes()).hexdigest()==m['sha256']; zipfile.ZipFile('branch-desktop-build.zip').extractall('.')"
@@ -67,11 +69,11 @@ jobs:
           DESKTOP_MAC_IDENTITY: '-'
       - name: Verify architecture, branding and live URL
         run: node desktop/scripts/verify-release.cjs ${{ matrix.platform }} ${{ matrix.arch }}
-      - if: matrix.arch == 'ia32'
+      - if: matrix.platform == 'mac' || matrix.arch != 'arm64'
         run: npm --prefix desktop install --no-save --package-lock=false playwright-core@1.64.1
-      - if: matrix.arch == 'ia32'
-        name: Run the actual 32-bit application
-        run: node desktop/scripts/test-packaged.cjs
+      - if: matrix.platform == 'mac' || matrix.arch != 'arm64'
+        name: Verify packaged microphone permissions with synthetic audio
+        run: node desktop/scripts/test-packaged.cjs ${{ matrix.platform }} ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.platform }}-${{ matrix.arch }}
@@ -115,8 +117,12 @@ jobs:
               with urllib.request.urlopen(request, timeout=120) as response:
                   body = response.read()
                   return json.loads(body) if body else None
-          release = api(base + '/releases/' + str(metadata['releaseId']))
-          assert release['draft'] is True and release['tag_name'] == os.environ['RELEASE_TAG']
+          releases = api(base + '/releases?per_page=100')
+          drafts = [r for r in releases if r['draft'] and r['name'] == metadata['releaseName']]
+          assert len(drafts) == 1, 'Expected one matching draft release'
+          release = drafts[0]
+          assert metadata['tag'] == os.environ['RELEASE_TAG']
+          input_asset = next(a for a in release['assets'] if a['name'] == 'branch-desktop-build.zip')
           upload = release['upload_url'].split('{')[0]
           for file in sorted(Path('installers').iterdir()):
               if file.suffix not in ['.dmg', '.exe'] and file.name != 'SHA256SUMS.txt':
@@ -126,7 +132,7 @@ jobs:
                   api(base + '/releases/assets/' + str(existing['id']), method='DELETE')
               print('Uploading ' + file.name, flush=True)
               api(upload + '?name=' + file.name, method='POST', data=file.read_bytes(), content_type='application/octet-stream')
-          api(base + '/releases/assets/' + str(metadata['inputAssetId']), method='DELETE')
-          api(base + '/releases/' + str(metadata['releaseId']), method='PATCH', data=json.dumps({'draft': False, 'make_latest': 'true'}).encode())
+          api(base + '/releases/assets/' + str(input_asset['id']), method='DELETE')
+          api(base + '/releases/' + str(release['id']), method='PATCH', data=json.dumps({'tag_name': os.environ['RELEASE_TAG'], 'target_commitish': os.environ['GITHUB_SHA'], 'draft': False, 'make_latest': 'true'}).encode())
           print('Published all five verified installers without requiring customer sign-in.')
           PYCODE

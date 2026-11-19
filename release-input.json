@@ -1,6 +1,6 @@
 {
-  "tag": "v0.1.1",
-  "sha256": "0615b68c75452a8f5aa9f65a9574b01719d0f63353129b7cf899273cd75ed96b",
-  "releaseId": 435107835,
-  "inputAssetId": 713150354
+  "tag": "v0.1.2",
+  "sha256": "46662c0b0b9957ab71855961218eda71d162512628f7a932097d62c0e7a545e3",
+  "sourceCommit": "5920ea17c0b5b2f53414c9dfc01595ea01349403",
+  "releaseName": "Branch 0.1.2 \u2014 desktop voice calls"
 }
