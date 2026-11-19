@@ -33,7 +33,7 @@ jobs:
           - os: windows-latest
             platform: win
             arch: ia32
-          - os: macos-latest
+          - os: macos-15-intel
             platform: mac
             arch: arm64
           - os: macos-15-intel
@@ -70,9 +70,12 @@ jobs:
           DESKTOP_MAC_IDENTITY: '-'
       - name: Verify architecture, branding and live URL
         run: node desktop/scripts/verify-release.cjs ${{ matrix.platform }} ${{ matrix.arch }}
-      - if: matrix.platform == 'mac' || matrix.arch != 'arm64'
+      - if: matrix.platform == 'mac' && matrix.arch == 'arm64'
+        name: Verify Apple Silicon binary architecture
+        run: lipo -verify_arch arm64 desktop/dist/mac-arm64/Branch.app/Contents/MacOS/Branch
+      - if: matrix.arch != 'arm64'
         run: npm --prefix desktop install --no-save --package-lock=false playwright-core@1.64.1
-      - if: matrix.platform == 'mac' || matrix.arch != 'arm64'
+      - if: matrix.arch != 'arm64'
         name: Verify packaged microphone permissions with synthetic audio
         run: node desktop/scripts/test-packaged.cjs ${{ matrix.platform }} ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4

@@ -11,3 +11,5 @@ Windows installers are unsigned and Mac apps are not Apple-notarized. Check your
 This repository hosts the download workflow and published installers. Build input is supplied as a private draft-release asset, verified against its recorded checksum, then removed before publication.
 
 Version 0.1.2 adds microphone access for private voice calls and group voice rooms in Team Chat. Install the update over 0.1.1, then allow microphone access when starting or accepting a call. The existing live workspace and LiveKit project are unchanged.
+
+The Apple Silicon DMG can be cross-built on an Intel Mac runner. Its ARM64 executable, code signature, audio-input entitlements and microphone usage description are verified before publication. For 0.1.2, the actual packaged Apple Silicon app also passed microphone deny/allow, camera denial and real two-way LiveKit synthetic-audio tests on an Apple Silicon Mac.
